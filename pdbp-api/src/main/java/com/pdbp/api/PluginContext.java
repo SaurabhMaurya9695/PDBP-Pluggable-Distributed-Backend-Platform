@@ -59,4 +59,15 @@ public interface PluginContext {
      * @return plugin-scoped logger
      */
     org.slf4j.Logger getLogger();
+
+    /**
+     * Gets a platform service by type.
+     * Allows plugins to access platform capabilities like metrics.
+     *
+     * @param serviceType the service interface class
+     * @return service instance if available, empty otherwise
+     */
+    default <T> Optional<T> getService(Class<T> serviceType) {
+        return Optional.empty();
+    }
 }

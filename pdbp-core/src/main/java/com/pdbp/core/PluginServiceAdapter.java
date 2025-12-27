@@ -4,6 +4,7 @@ import com.pdbp.api.Plugin;
 import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
 import com.pdbp.controller.PluginService;
+import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.util.PathResolver;
 
 import org.slf4j.Logger;
@@ -12,7 +13,9 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -118,6 +121,50 @@ public class PluginServiceAdapter implements PluginService {
         } catch (PluginException e) {
             throw new PluginService.PluginServiceException("Failed to unload plugin: " + pluginName, e);
         }
+    }
+
+    @Override
+    public Map<String, Object> getMetrics() {
+        MetricsCollector collector = MetricsCollector.getInstance();
+        Map<String, Object> metrics = new HashMap<>();
+
+        metrics.put("totalPluginsInstalled", collector.getTotalPluginsInstalled());
+        metrics.put("totalPluginsStarted", collector.getTotalPluginsStarted());
+        metrics.put("totalPluginsStopped", collector.getTotalPluginsStopped());
+        metrics.put("totalPluginsUnloaded", collector.getTotalPluginsUnloaded());
+        metrics.put("totalPluginErrors", collector.getTotalPluginErrors());
+        metrics.put("serverUptime", collector.getServerUptime());
+        metrics.put("totalApiRequests", collector.getTotalApiRequests());
+        metrics.put("totalApiErrors", collector.getTotalApiErrors());
+        metrics.put("apiEndpoints", collector.getApiEndpointCounts());
+        metrics.put("operationDurations", collector.getOperationDurations());
+
+        // Add plugin-specific metrics
+        Map<String, Object> pluginMetrics = new HashMap<>();
+        collector.getPluginMetrics().forEach((name, pm) -> {
+            Map<String, Object> pluginData = new HashMap<>();
+            pluginData.put("installCount", pm.getInstallCount());
+            pluginData.put("startCount", pm.getStartCount());
+            pluginData.put("stopCount", pm.getStopCount());
+            pluginData.put("errorCount", pm.getErrorCount());
+            pluginData.put("avgInstallDuration", pm.getAverageInstallDuration());
+            pluginData.put("avgStartDuration", pm.getAverageStartDuration());
+            pluginData.put("avgStopDuration", pm.getAverageStopDuration());
+            pluginMetrics.put(name, pluginData);
+        });
+        metrics.put("plugins", pluginMetrics);
+
+        return metrics;
+    }
+
+    @Override
+    public void recordApiRequest(String endpoint) {
+        MetricsCollector.getInstance().recordApiRequest(endpoint);
+    }
+
+    @Override
+    public void recordApiError(String endpoint) {
+        MetricsCollector.getInstance().recordApiError(endpoint);
     }
 
     /**

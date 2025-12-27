@@ -1,0 +1,51 @@
+@startuml PDBP Deployment Diagram
+!theme plain
+skinparam node {
+    BackgroundColor lightyellow
+    BorderColor black
+}
+
+title PDBP - Deployment Diagram
+
+node "PDBP Runtime" {
+    component "PDBPServer" as Server
+    component "PluginController" as Controller
+    component "PluginManager" as Manager
+    component "PluginClassLoader" as ClassLoader
+    component "LogRotationService" as LogRotation
+    
+    database "Log Files" as Logs {
+        file "pdbp.log"
+        file "pdbp-YYYY-MM-DD.log"
+    }
+    
+    folder "work/" as WorkDir {
+        file "example-plugin.jar"
+        file "other-plugins.jar"
+    }
+}
+
+node "Plugin JARs" {
+    component "ExamplePlugin" as ExamplePlugin
+    component "Other Plugins" as OtherPlugins
+}
+
+node "Client Applications" {
+    component "REST Client" as Client
+    component "Browser" as Browser
+}
+
+' Connections
+Client --> Server : HTTP REST API
+Browser --> Server : HTTP REST API
+Server --> Controller : routes requests
+Controller --> Manager : manages plugins
+Manager --> ClassLoader : creates loaders
+ClassLoader --> ExamplePlugin : loads
+ClassLoader --> OtherPlugins : loads
+Server --> LogRotation : starts service
+LogRotation --> Logs : writes logs
+Manager --> WorkDir : reads JARs
+
+@enduml
+

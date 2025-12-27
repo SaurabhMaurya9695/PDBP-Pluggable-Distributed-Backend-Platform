@@ -4,6 +4,8 @@ import com.pdbp.api.Plugin;
 import com.pdbp.api.PluginContext;
 import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
+import com.pdbp.api.PlatformService;
+import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.util.PathResolver;
 import com.pdbp.loader.PluginClassLoader;
 
@@ -91,6 +93,7 @@ public class PluginManager {
      */
     public Plugin installPlugin(String pluginName, String jarPath, String className) throws PluginException {
 
+        long startTime = System.currentTimeMillis();
         logger.info("Installing plugin: {} from {}", pluginName, jarPath);
 
         try {
@@ -142,7 +145,10 @@ public class PluginManager {
                 plugins.put(pluginName, new PluginWrapper(plugin, context));
                 classLoaders.put(pluginName, classLoader);
 
-                logger.info("Plugin installed successfully: {} v{}", plugin.getName(), plugin.getVersion());
+                long duration = System.currentTimeMillis() - startTime;
+                MetricsCollector.getInstance().recordPluginInstalled(pluginName, duration);
+                logger.info("Plugin installed successfully: {} v{} ({}ms)", plugin.getName(), plugin.getVersion(),
+                        duration);
                 return plugin;
             } catch (ClassNotFoundException e) {
                 closeClassLoader(classLoader);
@@ -247,9 +253,11 @@ public class PluginManager {
             logger.info("Plugin {}: {}", operationName + "ed", pluginName);
         } catch (PluginException e) {
             wrapper.setState(PluginState.FAILED);
+            MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
             throw e;
         } catch (Exception e) {
             wrapper.setState(PluginState.FAILED);
+            MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
             throw new PluginException("Failed to " + operationName + " plugin: " + pluginName, e);
         }
     }
@@ -286,6 +294,7 @@ public class PluginManager {
             }
 
             wrapper.setState(PluginState.UNLOADED);
+            MetricsCollector.getInstance().recordPluginUnloaded(pluginName);
             logger.info("Plugin unloaded: {}", pluginName);
         } catch (Exception e) {
             throw new PluginException("Failed to unload plugin: " + pluginName, e);
@@ -374,22 +383,24 @@ public class PluginManager {
      * Creates a plugin context (factory method).
      */
     private PluginContext createPluginContext(String pluginName, Plugin plugin) {
-        return new SimplePluginContext(pluginName, plugin);
+        return new SimplePluginContext(pluginName, plugin, this);
     }
 
     /**
      * Simple implementation of PluginContext.
      */
-    private static class SimplePluginContext implements PluginContext {
+    private static class SimplePluginContext implements PluginContext, PlatformService {
 
         private final String pluginName;
         private final Plugin plugin;
         private final org.slf4j.Logger logger;
         private final Map<String, String> config;
+        private final PluginManager pluginManager;
 
-        SimplePluginContext(String pluginName, Plugin plugin) {
+        SimplePluginContext(String pluginName, Plugin plugin, PluginManager pluginManager) {
             this.pluginName = pluginName;
             this.plugin = plugin;
+            this.pluginManager = pluginManager;
             this.logger = LoggerFactory.getLogger("plugin." + pluginName);
             this.config = new HashMap<>();
         }
@@ -423,6 +434,22 @@ public class PluginManager {
         @Override
         public org.slf4j.Logger getLogger() {
             return logger;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> Optional<T> getService(Class<T> serviceType) {
+            if (serviceType == PlatformService.class) {
+                return Optional.of((T) this);
+            }
+            if (serviceType.getName().equals("com.pdbp.core.metrics.MetricsCollector")) {
+                try {
+                    return Optional.of((T) MetricsCollector.getInstance());
+                } catch (Exception e) {
+                    logger.warn("Failed to get MetricsCollector service", e);
+                }
+            }
+            return Optional.empty();
         }
     }
 }
