@@ -1,0 +1,5 @@
+# Observability Plugin - SPI Service Provider Configuration
+# This file tells Java's ServiceLoader where to find Plugin implementations
+
+com.pdbp.observability.ObservabilityPlugin
+

@@ -5,6 +5,7 @@ import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
 import com.pdbp.controller.PluginService;
 import com.pdbp.core.metrics.MetricsCollector;
+import com.pdbp.core.spi.SPIPluginInstaller;
 import com.pdbp.core.util.PathResolver;
 
 import org.slf4j.Logger;
@@ -30,10 +31,12 @@ public class PluginServiceAdapter implements PluginService {
 
     private final PluginManager pluginManager;
     private final PluginDiscoveryService discoveryService;
+    private final SPIPluginInstaller spiInstaller;
 
     public PluginServiceAdapter(PluginManager pluginManager, PluginDiscoveryService discoveryService) {
         this.pluginManager = pluginManager;
         this.discoveryService = discoveryService;
+        this.spiInstaller = new SPIPluginInstaller(pluginManager);
     }
 
     @Override
@@ -79,8 +82,18 @@ public class PluginServiceAdapter implements PluginService {
                                 + ". Please place plugin JAR files in the 'work' directory at project root.");
             }
 
-            // Install and initialize plugin
-            Plugin plugin = pluginManager.installPlugin(pluginName, resolvedPath.toString(), className);
+            Plugin plugin;
+            try {
+                plugin = spiInstaller.installPluginFromJar(pluginName, resolvedPath);
+                logger.info("Successfully installed plugin via SPI: {}", pluginName);
+            } catch (PluginException e) {
+                throw new PluginService.PluginServiceException("SPI discovery failed for plugin: " + pluginName
+                        + ". Please provide className or ensure JAR contains META-INF/services/com.pdbp.api.Plugin "
+                        + "file.",
+                        e);
+            }
+
+            // Initialize plugin
             pluginManager.initPlugin(pluginName);
 
             // Return plugin info

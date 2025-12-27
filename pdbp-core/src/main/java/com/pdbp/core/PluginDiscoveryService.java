@@ -1,5 +1,7 @@
 package com.pdbp.core;
 
+import com.pdbp.core.spi.SPIPluginDiscovery;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,6 +22,7 @@ public class PluginDiscoveryService {
     private static final Logger logger = LoggerFactory.getLogger(PluginDiscoveryService.class);
 
     private final Path _pluginDirectory;
+    private final SPIPluginDiscovery spiDiscovery;
 
     /**
      * Creates a PluginDiscoveryService.
@@ -28,6 +31,7 @@ public class PluginDiscoveryService {
      */
     public PluginDiscoveryService(String pluginDirectoryPath) {
         this._pluginDirectory = Paths.get(pluginDirectoryPath);
+        this.spiDiscovery = new SPIPluginDiscovery();
         ensurePluginDirectoryExists();
     }
 
@@ -133,27 +137,44 @@ public class PluginDiscoveryService {
     /**
      * Extracts plugin class name from JAR.
      *
-     * <p>Strategy:
-     * 1. Check manifest for Plugin-Class attribute
-     * 2. Scan JAR for classes implementing Plugin interface
-     * 3. Use first found class
+     * <p>Strategy (in priority order):
+     * 1. Check SPI service file (META-INF/services/com.pdbp.api.Plugin) - NEW!
+     * 2. Check manifest for Plugin-Class attribute
+     * 3. Scan JAR for classes implementing Plugin interface
+     * 4. Use first found class
      */
     private String extractPluginClassName(Path jarPath, Manifest manifest) {
-        // Try manifest first
+        // Priority 1: Try SPI discovery (most reliable)
+        List<String> spiClasses = spiDiscovery.discoverPluginClasses(jarPath);
+        if (!spiClasses.isEmpty()) {
+            String className = spiClasses.get(0); // Use first SPI-discovered class
+            logger.debug("Found plugin class via SPI: {} in {}", className, jarPath);
+            return className;
+        }
+
+        // Priority 2: Try manifest
         if (manifest != null) {
             String className = manifest.getMainAttributes().getValue("Plugin-Class");
             if (className != null && !className.isEmpty()) {
+                logger.debug("Found plugin class via manifest: {} in {}", className, jarPath);
                 return className;
             }
         }
 
-        // Scan JAR for Plugin implementations
+        // Priority 3: Scan JAR for Plugin implementations (fallback)
         try (JarFile jarFile = new JarFile(jarPath.toFile())) {
-            return jarFile.stream().filter(entry -> entry.getName().endsWith(".class")).filter(
-                            entry -> !entry.getName().contains("$")) // Exclude inner classes
-                    .map(entry -> entry.getName().replace("/", ".").replace(".class", "")).filter(
-                            className -> !className.startsWith("com.pdbp.api")) // Exclude API classes
-                    .findFirst().orElse(null);
+            String className = jarFile.stream()
+                    .filter(entry -> entry.getName().endsWith(".class"))
+                    .filter(entry -> !entry.getName().contains("$")) // Exclude inner classes
+                    .map(entry -> entry.getName().replace("/", ".").replace(".class", ""))
+                    .filter(name -> !name.startsWith("com.pdbp.api")) // Exclude API classes
+                    .findFirst()
+                    .orElse(null);
+            
+            if (className != null) {
+                logger.debug("Found plugin class via scanning: {} in {}", className, jarPath);
+            }
+            return className;
         } catch (IOException e) {
             logger.error("Error scanning JAR for plugin class: {}", jarPath, e);
             return null;

@@ -1,0 +1,7 @@
+# Example Plugin - SPI Service Provider Configuration
+# This file tells Java's ServiceLoader where to find Plugin implementations
+# Format: One fully qualified class name per line
+# Comments start with #
+
+com.pdbp.example.ExamplePlugin
+
