@@ -272,7 +272,7 @@ public class PluginManager {
                 try {
                     wrapper.getPlugin().stop();
                 } catch (Exception e) {
-                    logger.warn("Error stopping plugin during unload: " + pluginName, e);
+                    logger.warn("Error stopping plugin during unload: {}", pluginName, e);
                 }
             }
 

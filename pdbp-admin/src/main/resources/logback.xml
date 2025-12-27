@@ -1,31 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    
-    <!-- Define log directory - resolve from user.dir (project root) -->
-    <property name="LOG_DIR" value="${user.dir}/logs"/>
+
+    <!-- Define log directory - absolute path as specified -->
+    <property name="LOG_DIR" value="/Users/saurabh/Desktop/Saurabh/PDBP/PDBP/logs"/>
     <property name="LOG_FILE" value="pdbp"/>
-    
+
     <!-- Console Appender - Output to console -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-    
-    <!-- File Appender - Output to file with rotation -->
+
+    <!-- File Appender - Output to file with daily rotation -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/${LOG_FILE}.log</file>
-        
-        <!-- Rolling policy: rotate daily and keep 30 days -->
+
+        <!-- Rolling policy: rotate daily and keep 3 days -->
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <!-- Daily rollover -->
-            <fileNamePattern>${LOG_DIR}/${LOG_FILE}.%d{yyyy-MM-dd}.log</fileNamePattern>
-            <!-- Keep 30 days of logs -->
-            <maxHistory>30</maxHistory>
-            <!-- Total size cap: 10GB -->
-            <totalSizeCap>10GB</totalSizeCap>
+            <!-- Daily rollover - creates new file when day changes -->
+            <fileNamePattern>${LOG_DIR}/${LOG_FILE}-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <!-- Keep 3 days of logs (LogRotationService handles cleanup) -->
+            <maxHistory>3</maxHistory>
+            <!-- Total size cap: 1GB -->
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
-        
+
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
@@ -36,21 +36,21 @@
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
     </logger>
-    
+
     <!-- Plugin-specific logging -->
     <logger name="com.pdbp.core" level="INFO"/>
     <logger name="com.pdbp.loader" level="DEBUG"/>
     <logger name="com.pdbp.admin" level="INFO"/>
     <logger name="com.pdbp.controller" level="INFO"/>
-    
+
     <!-- Spark Framework Logging -->
     <logger name="spark" level="WARN"/>
-    
+
     <!-- Root Logger -->
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
     </root>
-    
+
 </configuration>
 

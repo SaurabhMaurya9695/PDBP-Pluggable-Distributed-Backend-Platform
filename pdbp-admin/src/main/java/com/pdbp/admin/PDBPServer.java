@@ -2,6 +2,7 @@ package com.pdbp.admin;
 
 import com.pdbp.admin.config.CommandLineParser;
 import com.pdbp.admin.config.ServerConfig;
+import com.pdbp.admin.service.LogRotationService;
 import com.pdbp.controller.PluginController;
 import com.pdbp.core.PluginDiscoveryService;
 import com.pdbp.core.PluginManager;
@@ -25,6 +26,7 @@ public class PDBPServer {
     private final ServerConfig config;
     private final PluginController pluginController;
     private final ServerLifecycle lifecycle;
+    private final LogRotationService logRotationService;
 
     /**
      * Creates a PDBP server with default configuration.
@@ -41,11 +43,17 @@ public class PDBPServer {
     public PDBPServer(ServerConfig config) {
         this.config = config;
         logStartupBanner();
+        
+        // Initialize log rotation service
+        this.logRotationService = new LogRotationService();
+        logRotationService.start();
+        
         PluginManager pluginManager = new PluginManager();
         PluginDiscoveryService pluginDiscoveryService = new PluginDiscoveryService(config.getPluginDirectory());
         PluginServiceAdapter pluginService = new PluginServiceAdapter(pluginManager, pluginDiscoveryService);
         this.pluginController = new PluginController(pluginService);
         this.lifecycle = new ServerLifecycle(pluginManager);
+        this.lifecycle.setLogRotationService(logRotationService);
 
         startServer();
         registerShutdownHook();

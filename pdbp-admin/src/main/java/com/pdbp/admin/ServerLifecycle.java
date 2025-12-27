@@ -1,5 +1,6 @@
 package com.pdbp.admin;
 
+import com.pdbp.admin.service.LogRotationService;
 import com.pdbp.core.PluginManager;
 
 import org.slf4j.Logger;
@@ -16,9 +17,14 @@ final class ServerLifecycle {
 
     private static final Logger logger = LoggerFactory.getLogger(ServerLifecycle.class);
     private final PluginManager pluginManager;
+    private LogRotationService logRotationService;
 
     ServerLifecycle(PluginManager pluginManager) {
         this.pluginManager = pluginManager;
+    }
+
+    void setLogRotationService(LogRotationService logRotationService) {
+        this.logRotationService = logRotationService;
     }
 
     /**
@@ -28,6 +34,11 @@ final class ServerLifecycle {
         logger.info("Shutting down PDBP Server...");
 
         try {
+            // Stop log rotation service
+            if (logRotationService != null) {
+                logRotationService.stop();
+            }
+
             unloadAllPlugins();
             stop();
             logger.info("PDBP Server stopped");
