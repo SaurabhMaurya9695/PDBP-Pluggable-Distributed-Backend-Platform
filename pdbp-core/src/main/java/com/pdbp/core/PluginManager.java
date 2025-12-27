@@ -89,8 +89,7 @@ public class PluginManager {
      * @return the installed plugin instance
      * @throws PluginException if installation fails
      */
-    public Plugin installPlugin(String pluginName, String jarPath, String className)
-            throws PluginException {
+    public Plugin installPlugin(String pluginName, String jarPath, String className) throws PluginException {
 
         logger.info("Installing plugin: {} from {}", pluginName, jarPath);
 
@@ -105,25 +104,26 @@ public class PluginManager {
                 // If relative, resolve using PathResolver utility
                 jarFile = PathResolver.resolveJarPath(jarPath, null);
             }
-            
+
             // Validate JAR file exists
             if (!Files.exists(jarFile)) {
                 Path workDir = PathResolver.getWorkDirectory();
                 Path expectedPath = workDir.resolve(Paths.get(jarPath).getFileName());
                 logger.error("JAR file not found: {} (expected: {})", jarFile, expectedPath);
-                throw new PluginException("JAR file not found: " + jarFile + 
-                    ". Expected in work directory: " + expectedPath + 
-                    ". Please place plugin JAR files in the 'work' directory at project root.");
+                throw new PluginException(
+                        "JAR file not found: " + jarFile + ". Expected in work directory: " + expectedPath
+                                + ". Please place plugin JAR files in the 'work' directory at project root.");
             }
-            
+
             logger.debug("Using JAR file: {}", jarFile.toAbsolutePath());
 
             // Use the classloader that loaded PluginManager (has access to pdbp-api)
             ClassLoader parentClassLoader = getParentClassLoader();
-            logger.debug("Using parent ClassLoader: {} for plugin: {}", parentClassLoader.getClass().getName(), pluginName);
-            
+            logger.debug("Using parent ClassLoader: {} for plugin: {}", parentClassLoader.getClass().getName(),
+                    pluginName);
+
             PluginClassLoader classLoader = new PluginClassLoader(pluginName, jarFile, parentClassLoader);
-            
+
             try {
                 // Load and validate plugin class
                 Class<?> pluginClass = classLoader.loadClass(className);
@@ -134,17 +134,16 @@ public class PluginManager {
                 }
 
                 // Instantiate and register plugin
-                @SuppressWarnings("unchecked") 
-                Class<? extends Plugin> pluginType = (Class<? extends Plugin>) pluginClass;
+                @SuppressWarnings("unchecked") Class<? extends Plugin> pluginType =
+                        (Class<? extends Plugin>) pluginClass;
                 Plugin plugin = pluginType.getDeclaredConstructor().newInstance();
                 PluginContext context = createPluginContext(pluginName, plugin);
-                
+
                 plugins.put(pluginName, new PluginWrapper(plugin, context));
                 classLoaders.put(pluginName, classLoader);
 
                 logger.info("Plugin installed successfully: {} v{}", plugin.getName(), plugin.getVersion());
                 return plugin;
-                
             } catch (ClassNotFoundException e) {
                 closeClassLoader(classLoader);
                 throw new PluginException("Plugin class not found: " + className + " in JAR: " + jarFile, e);
@@ -177,13 +176,10 @@ public class PluginManager {
      */
     public void initPlugin(String pluginName) throws PluginException {
         PluginWrapper wrapper = getPluginWrapper(pluginName);
-        executeLifecycleOperation(pluginName, PluginState.LOADED, 
-            () -> {
-                logger.info("Initializing plugin: {}", pluginName);
-                wrapper.getPlugin().init(wrapper.getContext());
-            },
-            PluginState.INITIALIZED,
-            "initialize");
+        executeLifecycleOperation(pluginName, PluginState.LOADED, () -> {
+            logger.info("Initializing plugin: {}", pluginName);
+            wrapper.getPlugin().init(wrapper.getContext());
+        }, PluginState.INITIALIZED, "initialize");
     }
 
     /**
@@ -197,14 +193,11 @@ public class PluginManager {
         if (wrapper.getState() != PluginState.INITIALIZED && wrapper.getState() != PluginState.STOPPED) {
             throw new PluginException("Plugin must be INITIALIZED or STOPPED, current: " + wrapper.getState());
         }
-        
-        executeLifecycleOperation(pluginName, null, 
-            () -> {
-                logger.info("Starting plugin: {}", pluginName);
-                wrapper.getPlugin().start();
-            },
-            PluginState.STARTED,
-            "start");
+
+        executeLifecycleOperation(pluginName, null, () -> {
+            logger.info("Starting plugin: {}", pluginName);
+            wrapper.getPlugin().start();
+        }, PluginState.STARTED, "start");
     }
 
     /**
@@ -215,42 +208,39 @@ public class PluginManager {
      */
     public void stopPlugin(String pluginName) throws PluginException {
         PluginWrapper wrapper = getPluginWrapper(pluginName);
-        executeLifecycleOperation(pluginName, PluginState.STARTED,
-            () -> {
-                logger.info("Stopping plugin: {}", pluginName);
-                wrapper.getPlugin().stop();
-            },
-            PluginState.STOPPED,
-            "stop");
+        executeLifecycleOperation(pluginName, PluginState.STARTED, () -> {
+            logger.info("Stopping plugin: {}", pluginName);
+            wrapper.getPlugin().stop();
+        }, PluginState.STOPPED, "stop");
     }
-    
+
     /**
      * Functional interface for lifecycle operations that may throw PluginException.
      */
     @FunctionalInterface
     private interface LifecycleOperation {
+
         void execute() throws PluginException;
     }
-    
+
     /**
      * Executes a plugin lifecycle operation with state validation and error handling.
-     * 
-     * @param pluginName the plugin name
+     *
+     * @param pluginName    the plugin name
      * @param requiredState the required state (null to skip validation)
-     * @param operation the operation to execute
-     * @param targetState the target state after successful operation
+     * @param operation     the operation to execute
+     * @param targetState   the target state after successful operation
      * @param operationName the operation name for logging
      * @throws PluginException if operation fails
      */
-    private void executeLifecycleOperation(String pluginName, PluginState requiredState,
-                                          LifecycleOperation operation, PluginState targetState, String operationName) 
-            throws PluginException {
+    private void executeLifecycleOperation(String pluginName, PluginState requiredState, LifecycleOperation operation,
+            PluginState targetState, String operationName) throws PluginException {
         PluginWrapper wrapper = getPluginWrapper(pluginName);
-        
+
         if (requiredState != null && wrapper.getState() != requiredState) {
             throw new PluginException("Plugin must be in " + requiredState + " state, current: " + wrapper.getState());
         }
-        
+
         try {
             operation.execute();
             wrapper.setState(targetState);
@@ -336,17 +326,17 @@ public class PluginManager {
     /**
      * Gets the parent ClassLoader for plugin ClassLoaders.
      * Uses the ClassLoader that loaded PluginManager to ensure access to pdbp-api.
-     * 
+     *
      * @return parent ClassLoader
      */
     private ClassLoader getParentClassLoader() {
         ClassLoader classLoader = PluginManager.class.getClassLoader();
         return classLoader != null ? classLoader : ClassLoader.getSystemClassLoader();
     }
-    
+
     /**
      * Safely closes a ClassLoader, ignoring any exceptions.
-     * 
+     *
      * @param classLoader the ClassLoader to close
      */
     private void closeClassLoader(PluginClassLoader classLoader) {
@@ -358,7 +348,7 @@ public class PluginManager {
             }
         }
     }
-    
+
     /**
      * Gets plugin wrapper (internal method).
      */
@@ -368,9 +358,12 @@ public class PluginManager {
             Set<String> availablePlugins = plugins.keySet();
             String message = "Plugin not found: " + pluginName;
             if (availablePlugins.isEmpty()) {
-                message += ". No plugins are currently installed. Please install a plugin first using POST /api/plugins/install";
+                message +=
+                        ". No plugins are currently installed. Please install a plugin first using POST "
+                                + "/api/plugins/install";
             } else {
-                message += ". Available plugins: " + String.join(", ", availablePlugins) + ". Please install the plugin first using POST /api/plugins/install";
+                message += ". Available plugins: " + String.join(", ", availablePlugins)
+                        + ". Please install the plugin first using POST /api/plugins/install";
             }
             throw new PluginException(message);
         }

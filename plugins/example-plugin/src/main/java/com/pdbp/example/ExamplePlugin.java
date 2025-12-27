@@ -4,6 +4,8 @@ import com.pdbp.api.*;
 
 import org.slf4j.Logger;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * Example plugin demonstrating the PDBP plugin API.
  *
@@ -13,6 +15,7 @@ import org.slf4j.Logger;
  *   <li>Configuration access</li>
  *   <li>Logging</li>
  *   <li>State management</li>
+ *   <li>Background work execution</li>
  * </ul>
  *
  * <p>Design: Follows the Plugin interface contract and demonstrates
@@ -25,11 +28,14 @@ public class ExamplePlugin implements Plugin {
 
     private static final String PLUGIN_NAME = "example-plugin";
     private static final String PLUGIN_VERSION = "1.0.0";
+    private static final long WORK_INTERVAL_MS = 5000; // 5 seconds
 
     private PluginContext context;
     private Logger logger;
     private PluginState state;
-    private boolean running;
+    private volatile boolean running;
+    private Thread workerThread;
+    private final AtomicInteger workCounter = new AtomicInteger(0);
 
     @Override
     public String getName() {
@@ -68,7 +74,38 @@ public class ExamplePlugin implements Plugin {
         running = true;
         state = PluginState.STARTED;
 
-        logger.info("{} started successfully", getName());
+        // Start background worker thread
+        workerThread = new Thread(this::performWork, "ExamplePlugin-Worker");
+        workerThread.setDaemon(true);
+        workerThread.start();
+
+        logger.info("{} started successfully - Worker thread started", getName());
+    }
+
+    /**
+     * Performs background work while the plugin is running.
+     */
+    private void performWork() {
+        logger.info("ExamplePlugin: Worker thread started - Beginning work cycle");
+
+        while (running) {
+            try {
+                int count = workCounter.incrementAndGet();
+                logger.info("ExamplePlugin: Performing work iteration #{} - Plugin is active and running", count);
+
+                // Simulate some work
+                Thread.sleep(WORK_INTERVAL_MS);
+
+            } catch (InterruptedException e) {
+                logger.info("ExamplePlugin: Worker thread interrupted - Stopping work");
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                logger.error("ExamplePlugin: Error during work execution", e);
+            }
+        }
+
+        logger.info("ExamplePlugin: Worker thread stopped - Work cycle completed");
     }
 
     @Override
@@ -78,23 +115,49 @@ public class ExamplePlugin implements Plugin {
         }
 
         logger.info("Stopping {}...", getName());
+        logger.info("ExamplePlugin: Initiating graceful shutdown");
 
-        // Stop plugin operations
+        // Signal worker thread to stop
         running = false;
-        state = PluginState.STOPPED;
 
-        logger.info("{} stopped", getName());
+        // Wait for worker thread to finish (with timeout)
+        if (workerThread != null && workerThread.isAlive()) {
+            try {
+                workerThread.interrupt();
+                workerThread.join(2000); // Wait up to 2 seconds
+                if (workerThread.isAlive()) {
+                    logger.warn("ExamplePlugin: Worker thread did not stop gracefully within timeout");
+                } else {
+                    logger.info("ExamplePlugin: Worker thread stopped gracefully");
+                }
+            } catch (InterruptedException e) {
+                logger.warn("ExamplePlugin: Interrupted while waiting for worker thread to stop");
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        state = PluginState.STOPPED;
+        logger.info("{} stopped successfully", getName());
+        logger.info("ExamplePlugin: Total work iterations completed: {}", workCounter.get());
     }
 
     @Override
     public void destroy() {
         logger.info("Destroying {}...", getName());
+        logger.info("ExamplePlugin: Cleaning up resources");
 
-        // Cleanup resources
+        // Ensure worker thread is stopped
         running = false;
+        if (workerThread != null && workerThread.isAlive()) {
+            workerThread.interrupt();
+        }
+
+        // Reset state
+        workCounter.set(0);
         state = PluginState.UNLOADED;
 
         logger.info("{} destroyed", getName());
+        logger.info("ExamplePlugin: Cleanup completed");
     }
 
     @Override
