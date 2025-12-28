@@ -31,6 +31,7 @@
         <module>pdbp-core</module>
         <module>pdbp-admin</module>
         <module>plugins/example-plugin</module>
+        <module>plugins/observability-plugin</module>
     </modules>
 
     <dependencyManagement>

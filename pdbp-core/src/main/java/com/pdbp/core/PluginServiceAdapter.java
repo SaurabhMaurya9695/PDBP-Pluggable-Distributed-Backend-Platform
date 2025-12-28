@@ -199,6 +199,9 @@ public class PluginServiceAdapter implements PluginService {
 
     /**
      * Updates plugin configuration.
+     * 
+     * <p>After updating the configuration, if the plugin is currently started,
+     * it will be automatically restarted to pick up the new configuration.
      *
      * @param pluginName the plugin name
      * @param config    configuration map to update
@@ -211,7 +214,7 @@ public class PluginServiceAdapter implements PluginService {
         try {
             PluginConfigurationManager configManager = pluginManager.getConfigManager();
             configManager.savePluginConfig(pluginName, config);
-            logger.info("Configuration updated for plugin: {}", pluginName);
+            logger.info("Configuration updated for plugin: {}. Plugin will be restarted if currently running.", pluginName);
         } catch (Exception e) {
             throw new PluginService.PluginServiceException("Failed to update configuration for plugin: " + pluginName, e);
         }

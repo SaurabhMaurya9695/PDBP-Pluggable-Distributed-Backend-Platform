@@ -191,7 +191,75 @@ public class PluginManager {
         executeLifecycleOperation(pluginName, PluginState.LOADED, () -> {
             logger.info("Initializing plugin: {}", pluginName);
             wrapper.getPlugin().init(wrapper.getContext());
+            
+            // Register config change listener to restart plugin on config changes
+            configManager.addConfigChangeListener(pluginName, this::handleConfigChange);
         }, PluginState.INITIALIZED, "initialize");
+    }
+    
+    /**
+     * Handles configuration change for a plugin by restarting it.
+     *
+     * @param pluginName the plugin name
+     * @param newConfig  the new configuration (already loaded in config manager)
+     */
+    private void handleConfigChange(String pluginName, Map<String, String> newConfig) {
+        PluginWrapper wrapper = plugins.get(pluginName);
+        if (wrapper == null) {
+            logger.warn("Plugin not found for config change: {}", pluginName);
+            return;
+        }
+        
+        PluginState currentState = wrapper.getState();
+        logger.info("Configuration changed for plugin: {}. Current state: {}. Restarting plugin to apply changes...", 
+                pluginName, currentState);
+        
+        try {
+            // Only restart if plugin is currently started
+            if (currentState == PluginState.STARTED) {
+                // Stop the plugin gracefully
+                try {
+                    wrapper.getPlugin().stop();
+                    wrapper.setState(PluginState.STOPPED);
+                    logger.info("Plugin {} stopped for config reload", pluginName);
+                } catch (Exception e) {
+                    logger.error("Failed to stop plugin {} for config reload", pluginName, e);
+                    wrapper.setState(PluginState.FAILED);
+                    return;
+                }
+ 
+                // Note: Config is already loaded in memory by savePluginConfig(), no need to reload
+                // Re-initialize with new config (plugin is in STOPPED state, so we can re-init)
+                try {
+                    // Recreate context with new config (context will read from config manager which has new config)
+                    PluginContext newContext = createPluginContext(pluginName, wrapper.getPlugin());
+                    wrapper.getPlugin().init(newContext);
+                    wrapper.setState(PluginState.INITIALIZED);
+                    logger.info("Plugin {} re-initialized with new config", pluginName);
+                } catch (Exception e) {
+                    logger.error("Failed to re-initialize plugin {} after config change", pluginName, e);
+                    wrapper.setState(PluginState.FAILED);
+                    return;
+                }
+                
+                // Restart the plugin
+                try {
+                    wrapper.getPlugin().start();
+                    wrapper.setState(PluginState.STARTED);
+                    logger.info("Plugin {} restarted successfully with new configuration", pluginName);
+                } catch (Exception e) {
+                    logger.error("Failed to restart plugin {} after config change", pluginName, e);
+                    wrapper.setState(PluginState.FAILED);
+                }
+            } else {
+                // If plugin is not started, config is already loaded, just log
+                logger.info("Configuration updated for plugin: {} (plugin not started, will use new config on next start)", 
+                        pluginName);
+            }
+        } catch (Exception e) {
+            logger.error("Error handling config change for plugin: {}", pluginName, e);
+            wrapper.setState(PluginState.FAILED);
+        }
     }
 
     /**

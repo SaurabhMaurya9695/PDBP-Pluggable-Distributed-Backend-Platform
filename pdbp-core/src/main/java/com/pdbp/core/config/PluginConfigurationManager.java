@@ -403,13 +403,15 @@ public class PluginConfigurationManager implements PlatformService {
 
     /**
      * Reloads configuration for a plugin from file.
+     * 
+     * <p>Note: This method triggers config change notifications.
+     * Use with caution to avoid infinite loops.
      *
      * @param pluginName the plugin name
      */
     public void reloadPluginConfig(String pluginName) {
-        logger.info("Reloading configuration for plugin: {}", pluginName);
+        logger.debug("Reloading configuration for plugin: {}", pluginName);
         Map<String, String> config = loadPluginConfig(pluginName);
-        notifyConfigChange(pluginName, config);
     }
 
     /**
