@@ -55,5 +55,43 @@ public interface EventBus extends PlatformService {
      * @return number of active subscriptions
      */
     int getSubscriptionCount();
+
+    /**
+     * Replays events from persistence.
+     *
+     * <p>All events matching the criteria will be republished to current subscribers.
+     *
+     * @param eventType optional event type filter (null = all events)
+     * @param limit     maximum number of events to replay (0 = all)
+     * @return number of events replayed
+     */
+    int replayEvents(String eventType, int limit);
+
+    /**
+     * Gets the number of failed events in the Dead Letter Queue.
+     *
+     * @return DLQ size
+     */
+    int getDeadLetterQueueSize();
+
+    /**
+     * Gets the total number of failed events (including those removed from DLQ).
+     *
+     * @return total failed events count
+     */
+    long getTotalFailedEvents();
+
+    /**
+     * Replays failed events from the Dead Letter Queue.
+     *
+     * @param limit maximum number of events to replay (0 = all)
+     * @return number of events replayed
+     */
+    int replayFailedEvents(int limit);
+
+    /**
+     * Clears the Dead Letter Queue.
+     */
+    void clearDeadLetterQueue();
 }
 

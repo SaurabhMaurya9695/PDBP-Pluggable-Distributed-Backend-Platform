@@ -3,6 +3,7 @@ package com.pdbp.core.events;
 import com.pdbp.api.Event;
 import com.pdbp.api.EventBus;
 import com.pdbp.api.EventHandler;
+import com.pdbp.core.util.PathResolver;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +53,12 @@ public class EventBusImpl implements EventBus {
     // Subscription ID generator
     private final AtomicInteger subscriptionIdGenerator;
 
+    // Dead Letter Queue for failed events
+    private final DeadLetterQueue deadLetterQueue;
+
+    // Event persistence for replay
+    private final EventPersistence eventPersistence;
+
     private EventBusImpl() {
         this.subscriptionsByType = new ConcurrentHashMap<>();
         this.wildcardSubscriptions = new ArrayList<>();
@@ -62,7 +69,9 @@ public class EventBusImpl implements EventBus {
             return t;
         });
         this.subscriptionIdGenerator = new AtomicInteger(0);
-        logger.info("EventBus initialized");
+        this.deadLetterQueue = new DeadLetterQueue();
+        this.eventPersistence = new EventPersistence(PathResolver.getWorkDirectory());
+        logger.info("EventBus initialized with DLQ and event persistence");
     }
 
     /**
@@ -84,6 +93,9 @@ public class EventBusImpl implements EventBus {
 
         logger.info("Publishing event: type={}, source={}, timestamp={}", event.getType(), event.getSource(),
                 event.getTimestamp());
+
+        // Persist event to disk
+        eventPersistence.persistEvent(event);
 
         // Notify type-specific subscribers
         List<Subscription> typeSubscriptions = subscriptionsByType.get(event.getType());
@@ -109,7 +121,8 @@ public class EventBusImpl implements EventBus {
                 logger.debug("Event {} handled by subscription {}", event.getType(), subscription.getId());
             } catch (Exception e) {
                 logger.error("Error handling event {} by subscription {}", event.getType(), subscription.getId(), e);
-                // TODO: Add to dead letter queue in future
+                // Add to dead letter queue
+                deadLetterQueue.addFailedEvent(event, subscription.getId(), e);
             }
         });
     }
@@ -173,6 +186,59 @@ public class EventBusImpl implements EventBus {
             count += subscriptions.size();
         }
         return count;
+    }
+
+    @Override
+    public int replayEvents(String eventType, int limit) {
+        logger.info("Replaying events: type={}, limit={}", eventType, limit);
+        List<Event> events = eventPersistence.loadEvents(limit);
+        
+        int replayed = 0;
+        for (Event event : events) {
+            if (eventType == null || eventType.equals(event.getType())) {
+                publish(event);
+                replayed++;
+            }
+        }
+        
+        logger.info("Replayed {} events", replayed);
+        return replayed;
+    }
+
+    @Override
+    public int getDeadLetterQueueSize() {
+        return deadLetterQueue.size();
+    }
+
+    @Override
+    public long getTotalFailedEvents() {
+        return deadLetterQueue.getTotalFailedEvents();
+    }
+
+    @Override
+    public int replayFailedEvents(int limit) {
+        logger.info("Replaying failed events from DLQ: limit={}", limit);
+        List<DeadLetterQueue.FailedEvent> failedEvents = deadLetterQueue.getFailedEvents();
+
+        int replayed = 0;
+        int count = 0;
+        for (DeadLetterQueue.FailedEvent failedEvent : failedEvents) {
+            if (limit > 0 && count >= limit) {
+                break;
+            }
+            publish(failedEvent.getEvent());
+            replayed++;
+            count++;
+        }
+
+        logger.info("Replayed {} failed events from DLQ", replayed);
+        return replayed;
+    }
+
+    @Override
+    public void clearDeadLetterQueue() {
+        deadLetterQueue.clear();
+        logger.info("Dead Letter Queue cleared");
     }
 
     /**
