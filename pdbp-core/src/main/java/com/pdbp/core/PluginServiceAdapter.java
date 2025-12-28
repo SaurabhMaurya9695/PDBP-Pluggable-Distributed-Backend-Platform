@@ -4,6 +4,7 @@ import com.pdbp.api.Plugin;
 import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
 import com.pdbp.controller.PluginService;
+import com.pdbp.core.config.PluginConfigurationManager;
 import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.spi.SPIPluginInstaller;
 import com.pdbp.core.util.PathResolver;
@@ -178,6 +179,42 @@ public class PluginServiceAdapter implements PluginService {
     @Override
     public void recordApiError(String endpoint) {
         MetricsCollector.getInstance().recordApiError(endpoint);
+    }
+
+    /**
+     * Gets plugin configuration.
+     *
+     * @param pluginName the plugin name
+     * @return configuration map, or null if plugin not found
+     * @throws PluginServiceException if operation fails
+     */
+    @Override
+    public Map<String, String> getPluginConfig(String pluginName) throws PluginServiceException {
+        if (pluginManager.getPlugin(pluginName) == null) {
+            throw new PluginService.PluginServiceException("Plugin not found: " + pluginName);
+        }
+        PluginConfigurationManager configManager = pluginManager.getConfigManager();
+        return configManager.getPluginConfig(pluginName);
+    }
+
+    /**
+     * Updates plugin configuration.
+     *
+     * @param pluginName the plugin name
+     * @param config    configuration map to update
+     * @throws PluginServiceException if operation fails
+     */
+    public void updatePluginConfig(String pluginName, Map<String, String> config) throws PluginServiceException {
+        if (pluginManager.getPlugin(pluginName) == null) {
+            throw new PluginService.PluginServiceException("Plugin not found: " + pluginName);
+        }
+        try {
+            PluginConfigurationManager configManager = pluginManager.getConfigManager();
+            configManager.savePluginConfig(pluginName, config);
+            logger.info("Configuration updated for plugin: {}", pluginName);
+        } catch (Exception e) {
+            throw new PluginService.PluginServiceException("Failed to update configuration for plugin: " + pluginName, e);
+        }
     }
 
     /**

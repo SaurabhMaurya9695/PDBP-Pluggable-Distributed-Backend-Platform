@@ -5,6 +5,7 @@ import com.pdbp.api.PluginContext;
 import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
 import com.pdbp.api.PlatformService;
+import com.pdbp.core.config.PluginConfigurationManager;
 import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.util.PathResolver;
 import com.pdbp.loader.PluginClassLoader;
@@ -37,6 +38,9 @@ public class PluginManager {
 
     // Thread-safe storage for ClassLoaders
     private final Map<String, PluginClassLoader> classLoaders;
+    
+    // Configuration manager
+    private final PluginConfigurationManager configManager;
 
     /**
      * Internal wrapper to track plugin state and metadata.
@@ -76,6 +80,7 @@ public class PluginManager {
     public PluginManager() {
         this.plugins = new ConcurrentHashMap<>();
         this.classLoaders = new ConcurrentHashMap<>();
+        this.configManager = PluginConfigurationManager.getInstance(PathResolver.getWorkDirectory());
         logger.info("PluginManager initialized");
     }
 
@@ -140,6 +145,7 @@ public class PluginManager {
                 @SuppressWarnings("unchecked") Class<? extends Plugin> pluginType =
                         (Class<? extends Plugin>) pluginClass;
                 Plugin plugin = pluginType.getDeclaredConstructor().newInstance();
+                configManager.loadPluginConfig(pluginName);
                 PluginContext context = createPluginContext(pluginName, plugin);
 
                 plugins.put(pluginName, new PluginWrapper(plugin, context));
@@ -293,6 +299,9 @@ public class PluginManager {
                 classLoader.close();
             }
 
+            // Remove configuration
+            configManager.removePluginConfig(pluginName);
+
             wrapper.setState(PluginState.UNLOADED);
             MetricsCollector.getInstance().recordPluginUnloaded(pluginName);
             logger.info("Plugin unloaded: {}", pluginName);
@@ -387,22 +396,27 @@ public class PluginManager {
     }
 
     /**
+     * Gets the configuration manager.
+     *
+     * @return configuration manager instance
+     */
+    public PluginConfigurationManager getConfigManager() {
+        return configManager;
+    }
+
+    /**
      * Simple implementation of PluginContext.
      */
-    private static class SimplePluginContext implements PluginContext, PlatformService {
+    private class SimplePluginContext implements PluginContext, PlatformService {
 
         private final String pluginName;
         private final Plugin plugin;
         private final org.slf4j.Logger logger;
-        private final Map<String, String> config;
-        private final PluginManager pluginManager;
 
         SimplePluginContext(String pluginName, Plugin plugin, PluginManager pluginManager) {
             this.pluginName = pluginName;
             this.plugin = plugin;
-            this.pluginManager = pluginManager;
             this.logger = LoggerFactory.getLogger("plugin." + pluginName);
-            this.config = new HashMap<>();
         }
 
         @Override
@@ -417,18 +431,17 @@ public class PluginManager {
 
         @Override
         public Optional<String> getConfig(String key) {
-            return Optional.ofNullable(config.get(key));
+            return configManager.getPluginConfig(pluginName, key);
         }
 
         @Override
         public Map<String, String> getConfig() {
-            return new HashMap<>(config);
+            return configManager.getPluginConfig(pluginName);
         }
 
         @Override
         public Optional<String> getSecret(String key) {
-            // TODO: Implement secret management
-            return Optional.empty();
+            return configManager.getPluginSecret(pluginName, key);
         }
 
         @Override

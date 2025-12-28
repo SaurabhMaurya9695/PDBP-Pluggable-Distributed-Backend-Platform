@@ -28,7 +28,7 @@ public class ExamplePlugin implements Plugin {
 
     private static final String PLUGIN_NAME = "example-plugin";
     private static final String PLUGIN_VERSION = "1.0.0";
-    private static final long WORK_INTERVAL_MS = 5000; // 5 seconds
+    private static final long DEFAULT_WORK_INTERVAL_MS = 5000; // 5 seconds
 
     private PluginContext context;
     private Logger logger;
@@ -36,6 +36,11 @@ public class ExamplePlugin implements Plugin {
     private volatile boolean running;
     private Thread workerThread;
     private final AtomicInteger workCounter = new AtomicInteger(0);
+    
+    // Configuration values (loaded from config file)
+    private long workInterval = DEFAULT_WORK_INTERVAL_MS;
+    private boolean enableLogging = true;
+    private int maxWorkItems = 100;
 
     @Override
     public String getName() {
@@ -57,7 +62,28 @@ public class ExamplePlugin implements Plugin {
 
         // Access configuration
         String greeting = context.getConfig("greeting", "Hello from Example Plugin!");
-        logger.info("Configuration greeting: {}", greeting);
+        String workIntervalStr = context.getConfig("workInterval", "5000");
+        String enableLoggingStr = context.getConfig("enableLogging", "true");
+        String maxWorkItemsStr = context.getConfig("maxWorkItems", "100");
+        
+        try {
+            long workInterval = Long.parseLong(workIntervalStr);
+            boolean enableLogging = Boolean.parseBoolean(enableLoggingStr);
+            int maxWorkItems = Integer.parseInt(maxWorkItemsStr);
+            
+            logger.info("Configuration loaded:");
+            logger.info("  - greeting: {}", greeting);
+            logger.info("  - workInterval: {}ms", workInterval);
+            logger.info("  - enableLogging: {}", enableLogging);
+            logger.info("  - maxWorkItems: {}", maxWorkItems);
+            
+            // Store config values for use in start()
+            this.workInterval = workInterval;
+            this.enableLogging = enableLogging;
+            this.maxWorkItems = maxWorkItems;
+        } catch (NumberFormatException e) {
+            logger.warn("Invalid configuration value, using defaults", e);
+        }
 
         logger.info("Example plugin initialized successfully");
     }
@@ -88,13 +114,16 @@ public class ExamplePlugin implements Plugin {
     private void performWork() {
         logger.info("ExamplePlugin: Worker thread started - Beginning work cycle");
 
-        while (running) {
+        while (running && workCounter.get() < maxWorkItems) {
             try {
                 int count = workCounter.incrementAndGet();
-                logger.info("ExamplePlugin: Performing work iteration #{} - Plugin is active and running", count);
+                if (enableLogging) {
+                    logger.info("ExamplePlugin: Performing work iteration #{}/{} - Plugin is active and running", 
+                            count, maxWorkItems);
+                }
 
                 // Simulate some work
-                Thread.sleep(WORK_INTERVAL_MS);
+                Thread.sleep(workInterval);
 
             } catch (InterruptedException e) {
                 logger.info("ExamplePlugin: Worker thread interrupted - Stopping work");
@@ -105,7 +134,8 @@ public class ExamplePlugin implements Plugin {
             }
         }
 
-        logger.info("ExamplePlugin: Worker thread stopped - Work cycle completed");
+        logger.info("ExamplePlugin: Worker thread stopped - Work cycle completed (total iterations: {})", 
+                workCounter.get());
     }
 
     @Override
