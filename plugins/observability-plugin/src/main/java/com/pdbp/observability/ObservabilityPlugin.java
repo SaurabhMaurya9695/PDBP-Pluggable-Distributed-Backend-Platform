@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -34,8 +35,11 @@ public class ObservabilityPlugin implements Plugin {
     private volatile boolean running;
     private Thread metricsCollectorThread;
     private Object metricsCollector;
+    private EventBus eventBus;
+    private String lifecycleSubscriptionId;
     private final Map<String, Object> collectedMetrics = new HashMap<>();
     private final AtomicLong metricsCollectionCount = new AtomicLong(0);
+    private final AtomicLong lifecycleEventsReceived = new AtomicLong(0);
 
     @Override
     public String getName() {
@@ -63,6 +67,19 @@ public class ObservabilityPlugin implements Plugin {
             logger.info("ObservabilityPlugin: Successfully connected to MetricsCollector");
         } catch (ClassNotFoundException e) {
             throw new PluginException("Failed to access MetricsCollector: " + e.getMessage(), e);
+        }
+
+        // Subscribe to lifecycle events via EventBus
+        Optional<EventBus> eventBusOpt = context.getService(EventBus.class);
+        if (eventBusOpt.isPresent()) {
+            this.eventBus = eventBusOpt.get();
+            // Subscribe to all plugin lifecycle events
+            this.lifecycleSubscriptionId = eventBus.subscribe("PluginInstalled", this::handleLifecycleEvent);
+            eventBus.subscribe("PluginStarted", this::handleLifecycleEvent);
+            eventBus.subscribe("PluginStopped", this::handleLifecycleEvent);
+            logger.info("ObservabilityPlugin: Subscribed to plugin lifecycle events");
+        } else {
+            logger.warn("ObservabilityPlugin: EventBus not available, lifecycle event tracking disabled");
         }
 
         logger.info("ObservabilityPlugin initialized successfully");
@@ -159,6 +176,17 @@ public class ObservabilityPlugin implements Plugin {
     }
 
     /**
+     * Handles plugin lifecycle events.
+     */
+    private void handleLifecycleEvent(Event event) {
+        lifecycleEventsReceived.incrementAndGet();
+        String pluginName = (String) event.getPayload("pluginName");
+        String pluginVersion = (String) event.getPayload("pluginVersion");
+        logger.info("ObservabilityPlugin: Received lifecycle event - type={}, plugin={}, version={}", 
+                event.getType(), pluginName, pluginVersion);
+    }
+
+    /**
      * Invokes a method on MetricsCollector using reflection.
      */
     private Object invokeMethod(String methodName) throws Exception {
@@ -197,9 +225,20 @@ public class ObservabilityPlugin implements Plugin {
             }
         }
 
+        // Unsubscribe from events
+        if (eventBus != null && lifecycleSubscriptionId != null) {
+            try {
+                eventBus.unsubscribe(lifecycleSubscriptionId);
+                logger.info("ObservabilityPlugin: Unsubscribed from lifecycle events");
+            } catch (Exception e) {
+                logger.warn("ObservabilityPlugin: Error unsubscribing from events", e);
+            }
+        }
+
         state = PluginState.STOPPED;
         logger.info("{} stopped successfully", getName());
         logger.info("ObservabilityPlugin: Total metrics collections: {}", metricsCollectionCount.get());
+        logger.info("ObservabilityPlugin: Total lifecycle events received: {}", lifecycleEventsReceived.get());
     }
 
     @Override
@@ -212,10 +251,20 @@ public class ObservabilityPlugin implements Plugin {
             metricsCollectorThread.interrupt();
         }
 
+        // Unsubscribe from events if not already done
+        if (eventBus != null && lifecycleSubscriptionId != null) {
+            try {
+                eventBus.unsubscribe(lifecycleSubscriptionId);
+            } catch (Exception e) {
+                logger.warn("ObservabilityPlugin: Error unsubscribing during destroy", e);
+            }
+        }
+
         synchronized (collectedMetrics) {
             collectedMetrics.clear();
         }
         metricsCollectionCount.set(0);
+        lifecycleEventsReceived.set(0);
         state = PluginState.UNLOADED;
 
         logger.info("{} destroyed", getName());

@@ -1,9 +1,16 @@
 package com.pdbp.example;
 
-import com.pdbp.api.*;
+import com.pdbp.api.Event;
+import com.pdbp.api.EventBus;
+import com.pdbp.api.EventFactory;
+import com.pdbp.api.Plugin;
+import com.pdbp.api.PluginContext;
+import com.pdbp.api.PluginException;
+import com.pdbp.api.PluginState;
 
 import org.slf4j.Logger;
 
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -36,6 +43,10 @@ public class ExamplePlugin implements Plugin {
     private volatile boolean running;
     private Thread workerThread;
     private final AtomicInteger workCounter = new AtomicInteger(0);
+    
+    // Event bus for publishing/subscribing to events
+    private EventBus eventBus;
+    private String allEventsSubscriptionId;
     
     // Configuration values (loaded from config file)
     private long workInterval = DEFAULT_WORK_INTERVAL_MS;
@@ -85,6 +96,19 @@ public class ExamplePlugin implements Plugin {
             logger.warn("Invalid configuration value, using defaults", e);
         }
 
+        // Subscribe to EventBus to listen to all events (demonstration)
+        Optional<EventBus> eventBusOpt = context.getService(EventBus.class);
+        if (eventBusOpt.isPresent()) {
+            this.eventBus = eventBusOpt.get();
+            // Subscribe to all events to demonstrate event listening
+            this.allEventsSubscriptionId = eventBus.subscribe((event) -> {
+                logger.info("ExamplePlugin: Received event - type={}, source={}", event.getType(), event.getSource());
+            });
+            logger.info("ExamplePlugin: Subscribed to EventBus (listening to all events)");
+        } else {
+            logger.warn("ExamplePlugin: EventBus not available");
+        }
+
         logger.info("Example plugin initialized successfully");
     }
 
@@ -99,6 +123,21 @@ public class ExamplePlugin implements Plugin {
         // Start plugin operations
         running = true;
         state = PluginState.STARTED;
+
+        // Publish a custom event to demonstrate event publishing
+        if (eventBus != null) {
+            try {
+                java.util.Map<String, Object> payload = new java.util.HashMap<>();
+                payload.put("version", getVersion());
+                payload.put("workInterval", workInterval);
+                
+                Event event = EventFactory.createEvent("ExamplePluginStarted", getName(), payload);
+                eventBus.publish(event);
+                logger.info("ExamplePlugin: Published ExamplePluginStarted event");
+            } catch (Exception e) {
+                logger.warn("ExamplePlugin: Failed to publish event", e);
+            }
+        }
 
         // Start background worker thread
         workerThread = new Thread(this::performWork, "ExamplePlugin-Worker");
@@ -163,6 +202,16 @@ public class ExamplePlugin implements Plugin {
             } catch (InterruptedException e) {
                 logger.warn("ExamplePlugin: Interrupted while waiting for worker thread to stop");
                 Thread.currentThread().interrupt();
+            }
+        }
+
+        // Unsubscribe from events
+        if (eventBus != null && allEventsSubscriptionId != null) {
+            try {
+                eventBus.unsubscribe(allEventsSubscriptionId);
+                logger.info("ExamplePlugin: Unsubscribed from EventBus");
+            } catch (Exception e) {
+                logger.warn("ExamplePlugin: Error unsubscribing from events", e);
             }
         }
 

@@ -62,7 +62,7 @@ public interface PluginContext {
 
     /**
      * Gets a platform service by type.
-     * Allows plugins to access platform capabilities like metrics.
+     * Allows plugins to access platform capabilities like metrics, event bus, etc.
      *
      * @param serviceType the service interface class
      * @return service instance if available, empty otherwise

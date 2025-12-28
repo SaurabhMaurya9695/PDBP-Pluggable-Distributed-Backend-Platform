@@ -1,11 +1,13 @@
 package com.pdbp.core;
 
+import com.pdbp.api.EventBus;
 import com.pdbp.api.Plugin;
 import com.pdbp.api.PluginContext;
 import com.pdbp.api.PluginException;
 import com.pdbp.api.PluginState;
 import com.pdbp.api.PlatformService;
 import com.pdbp.core.config.PluginConfigurationManager;
+import com.pdbp.core.events.EventBusImpl;
 import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.util.PathResolver;
 import com.pdbp.loader.PluginClassLoader;
@@ -41,6 +43,9 @@ public class PluginManager {
     
     // Configuration manager
     private final PluginConfigurationManager configManager;
+    
+    // Event bus
+    private final EventBus eventBus;
 
     /**
      * Internal wrapper to track plugin state and metadata.
@@ -81,6 +86,7 @@ public class PluginManager {
         this.plugins = new ConcurrentHashMap<>();
         this.classLoaders = new ConcurrentHashMap<>();
         this.configManager = PluginConfigurationManager.getInstance(PathResolver.getWorkDirectory());
+        this.eventBus = EventBusImpl.getInstance();
         logger.info("PluginManager initialized");
     }
 
@@ -153,6 +159,10 @@ public class PluginManager {
 
                 long duration = System.currentTimeMillis() - startTime;
                 MetricsCollector.getInstance().recordPluginInstalled(pluginName, duration);
+                
+                // Publish plugin installed event
+                publishPluginLifecycleEvent("PluginInstalled", pluginName, plugin.getVersion());
+                
                 logger.info("Plugin installed successfully: {} v{} ({}ms)", plugin.getName(), plugin.getVersion(),
                         duration);
                 return plugin;
@@ -277,6 +287,8 @@ public class PluginManager {
         executeLifecycleOperation(pluginName, null, () -> {
             logger.info("Starting plugin: {}", pluginName);
             wrapper.getPlugin().start();
+            // Publish plugin started event
+            publishPluginLifecycleEvent("PluginStarted", pluginName, wrapper.getPlugin().getVersion());
         }, PluginState.STARTED, "start");
     }
 
@@ -291,6 +303,8 @@ public class PluginManager {
         executeLifecycleOperation(pluginName, PluginState.STARTED, () -> {
             logger.info("Stopping plugin: {}", pluginName);
             wrapper.getPlugin().stop();
+            // Publish plugin stopped event
+            publishPluginLifecycleEvent("PluginStopped", pluginName, wrapper.getPlugin().getVersion());
         }, PluginState.STOPPED, "stop");
     }
 
@@ -473,6 +487,38 @@ public class PluginManager {
     }
 
     /**
+     * Gets the event bus.
+     *
+     * @return event bus instance
+     */
+    public EventBus getEventBus() {
+        return eventBus;
+    }
+
+    /**
+     * Publishes a plugin lifecycle event.
+     *
+     * @param eventType   the event type (e.g., "PluginInstalled", "PluginStarted")
+     * @param pluginName  the plugin name
+     * @param pluginVersion the plugin version
+     */
+    private void publishPluginLifecycleEvent(String eventType, String pluginName, String pluginVersion) {
+        try {
+            com.pdbp.core.events.SimpleEvent event = new com.pdbp.core.events.SimpleEvent.Builder()
+                    .type(eventType)
+                    .source("PluginManager")
+                    .payload("pluginName", pluginName)
+                    .payload("pluginVersion", pluginVersion)
+                    .payload("timestamp", System.currentTimeMillis())
+                    .build();
+            eventBus.publish(event);
+            logger.debug("Published lifecycle event: {} for plugin: {}", eventType, pluginName);
+        } catch (Exception e) {
+            logger.warn("Failed to publish lifecycle event: {} for plugin: {}", eventType, pluginName, e);
+        }
+    }
+
+    /**
      * Simple implementation of PluginContext.
      */
     private class SimplePluginContext implements PluginContext, PlatformService {
@@ -522,6 +568,9 @@ public class PluginManager {
         public <T> Optional<T> getService(Class<T> serviceType) {
             if (serviceType == PlatformService.class) {
                 return Optional.of((T) this);
+            }
+            if (serviceType == EventBus.class) {
+                return Optional.of((T) eventBus);
             }
             if (serviceType.getName().equals("com.pdbp.core.metrics.MetricsCollector")) {
                 try {
