@@ -40,6 +40,7 @@ final class ServerLifecycle {
             }
 
             unloadAllPlugins();
+            pluginManager.shutdown();
             stop();
             logger.info("PDBP Server stopped");
         } catch (Exception e) {

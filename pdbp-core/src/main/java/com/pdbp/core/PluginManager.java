@@ -8,6 +8,7 @@ import com.pdbp.api.PluginState;
 import com.pdbp.api.PlatformService;
 import com.pdbp.core.config.PluginConfigurationManager;
 import com.pdbp.core.events.EventBusImpl;
+import com.pdbp.core.healing.SelfHealingService;
 import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.util.PathResolver;
 import com.pdbp.loader.PluginClassLoader;
@@ -19,7 +20,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +46,8 @@ public class PluginManager {
     
     // Event bus
     private final EventBus eventBus;
+
+    private final SelfHealingService selfHealingService;
 
     /**
      * Internal wrapper to track plugin state and metadata.
@@ -87,7 +89,12 @@ public class PluginManager {
         this.classLoaders = new ConcurrentHashMap<>();
         this.configManager = PluginConfigurationManager.getInstance(PathResolver.getWorkDirectory());
         this.eventBus = EventBusImpl.getInstance();
-        logger.info("PluginManager initialized");
+        
+        // Initialize self-healing service (automatic failure recovery)
+        this.selfHealingService = new SelfHealingService(3, 5000, 60000); // 3 retries, 5s-60s backoff
+        setupSelfHealingCallbacks();
+        
+        logger.info("PluginManager initialized with self-healing enabled");
     }
 
     /**
@@ -157,6 +164,8 @@ public class PluginManager {
                 plugins.put(pluginName, new PluginWrapper(plugin, context));
                 classLoaders.put(pluginName, classLoader);
 
+                // Register plugin for self-healing
+                selfHealingService.registerPlugin(pluginName);
                 long duration = System.currentTimeMillis() - startTime;
                 MetricsCollector.getInstance().recordPluginInstalled(pluginName, duration);
                 
@@ -265,6 +274,8 @@ public class PluginManager {
                 // If plugin is not started, config is already loaded, just log
                 logger.info("Configuration updated for plugin: {} (plugin not started, will use new config on next start)", 
                         pluginName);
+                wrapper.setState(PluginState.FAILED);
+                selfHealingService.handlePluginFailure(pluginName, null);
             }
         } catch (Exception e) {
             logger.error("Error handling config change for plugin: {}", pluginName, e);
@@ -342,10 +353,18 @@ public class PluginManager {
         } catch (PluginException e) {
             wrapper.setState(PluginState.FAILED);
             MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
+            
+            // Notify self-healing service (will attempt automatic recovery)
+            selfHealingService.handlePluginFailure(pluginName, e);
+            
             throw e;
         } catch (Exception e) {
             wrapper.setState(PluginState.FAILED);
             MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
+            
+            // Notify self-healing service (will attempt automatic recovery)
+            selfHealingService.handlePluginFailure(pluginName, e);
+            
             throw new PluginException("Failed to " + operationName + " plugin: " + pluginName, e);
         }
     }
@@ -383,7 +402,7 @@ public class PluginManager {
 
             // Remove configuration
             configManager.removePluginConfig(pluginName);
-
+            selfHealingService.unregisterPlugin(pluginName);
             wrapper.setState(PluginState.UNLOADED);
             MetricsCollector.getInstance().recordPluginUnloaded(pluginName);
             logger.info("Plugin unloaded: {}", pluginName);
@@ -493,6 +512,68 @@ public class PluginManager {
      */
     public EventBus getEventBus() {
         return eventBus;
+    }
+
+    /**
+     * Sets up self-healing callbacks.
+     */
+    private void setupSelfHealingCallbacks() {
+        // Restart plugin callback
+        selfHealingService.setRestartPluginCallback(pluginName -> {
+            try {
+                PluginWrapper wrapper = plugins.get(pluginName);
+                logger.info("started a callback to restart the plugin");
+                if (wrapper != null && wrapper.getState() == PluginState.FAILED) {
+                    logger.info("Self-healing: Attempting to restart plugin: {}", pluginName);
+                    // Stop if needed
+                    if (wrapper.getState() == PluginState.STARTED) {
+                        try {
+                            wrapper.getPlugin().stop();
+                        } catch (Exception e) {
+                            logger.warn("Error stopping plugin during recovery: {}", pluginName, e);
+                        }
+                    }
+                    // Re-initialize
+                    try {
+                        wrapper.getPlugin().init(wrapper.getContext());
+                        wrapper.setState(PluginState.INITIALIZED);
+                    } catch (Exception e) {
+                        logger.error("Error re-initializing plugin during recovery: {}", pluginName, e);
+                        throw e;
+                    }
+                    // Start
+                    try {
+                        wrapper.getPlugin().start();
+                        wrapper.setState(PluginState.STARTED);
+                        
+                        // Record success (resets failure count)
+                        selfHealingService.recordSuccess(pluginName);
+                        
+                        logger.info("Self-healing: Successfully restarted plugin: {}", pluginName);
+                    } catch (Exception e) {
+                        logger.error("Error starting plugin during recovery: {}", pluginName, e);
+                        throw e;
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Self-healing: Failed to restart plugin: {}", pluginName, e);
+                selfHealingService.handlePluginFailure(pluginName, e);
+            }
+        });
+
+        // Alert callback
+        selfHealingService.setAlertCallback(pluginName -> {
+            logger.error("Self-healing: ALERT - Plugin {} requires manual intervention", pluginName);
+            // TODO: Integrate with alerting system (email, Slack, etc.)
+        });
+    }
+
+    /**
+     * Shuts down the plugin manager and self-healing service.
+     */
+    public void shutdown() {
+        selfHealingService.shutdown();
+        logger.info("PluginManager shut down");
     }
 
     /**

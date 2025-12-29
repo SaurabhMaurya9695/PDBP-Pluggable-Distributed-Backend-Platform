@@ -207,6 +207,7 @@ public class PluginServiceAdapter implements PluginService {
      * @param config    configuration map to update
      * @throws PluginServiceException if operation fails
      */
+    @Override
     public void updatePluginConfig(String pluginName, Map<String, String> config) throws PluginServiceException {
         if (pluginManager.getPlugin(pluginName) == null) {
             throw new PluginService.PluginServiceException("Plugin not found: " + pluginName);

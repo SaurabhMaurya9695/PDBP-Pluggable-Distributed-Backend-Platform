@@ -76,17 +76,20 @@ public class ExamplePlugin implements Plugin {
         String workIntervalStr = context.getConfig("workInterval", "5000");
         String enableLoggingStr = context.getConfig("enableLogging", "true");
         String maxWorkItemsStr = context.getConfig("maxWorkItems", "100");
+        String simulateFailureStr = context.getConfig("simulateFailure", "false");
         
         try {
             long workInterval = Long.parseLong(workIntervalStr);
             boolean enableLogging = Boolean.parseBoolean(enableLoggingStr);
             int maxWorkItems = Integer.parseInt(maxWorkItemsStr);
+            boolean simulateFailure = Boolean.parseBoolean(simulateFailureStr);
             
             logger.info("Configuration loaded:");
             logger.info("  - greeting: {}", greeting);
             logger.info("  - workInterval: {}ms", workInterval);
             logger.info("  - enableLogging: {}", enableLogging);
             logger.info("  - maxWorkItems: {}", maxWorkItems);
+            logger.info("  - simulateFailure: {} (⚠️ Set to 'true' to test self-healing)", simulateFailure);
             
             // Store config values for use in start()
             this.workInterval = workInterval;
