@@ -136,19 +136,13 @@ public class PluginManager {
                                 + ". Please place plugin JAR files in the 'work' directory at project root.");
             }
 
-            logger.debug("Using JAR file: {}", jarFile.toAbsolutePath());
-
             // Use the classloader that loaded PluginManager (has access to pdbp-api)
             ClassLoader parentClassLoader = getParentClassLoader();
-            logger.debug("Using parent ClassLoader: {} for plugin: {}", parentClassLoader.getClass().getName(),
-                    pluginName);
-
             PluginClassLoader classLoader = new PluginClassLoader(pluginName, jarFile, parentClassLoader);
 
             try {
                 // Load and validate plugin class
                 Class<?> pluginClass = classLoader.loadClass(className);
-                logger.debug("Loaded plugin class: {}", className);
 
                 if (!Plugin.class.isAssignableFrom(pluginClass)) {
                     throw new PluginException("Class " + className + " does not implement Plugin interface");
@@ -172,11 +166,11 @@ public class PluginManager {
                 // Publish plugin installed event
                 publishPluginLifecycleEvent("PluginInstalled", pluginName, plugin.getVersion());
                 
-                logger.info("Plugin installed successfully: {} v{} ({}ms)", plugin.getName(), plugin.getVersion(),
-                        duration);
+                logger.info("Plugin '{}' v{} installed successfully ({}ms)", pluginName, plugin.getVersion(), duration);
                 return plugin;
             } catch (ClassNotFoundException e) {
                 closeClassLoader(classLoader);
+                logger.error("Plugin class not found: {} in JAR: {}", className, jarFile);
                 throw new PluginException("Plugin class not found: " + className + " in JAR: " + jarFile, e);
             } catch (NoSuchMethodException e) {
                 closeClassLoader(classLoader);
@@ -186,6 +180,7 @@ public class PluginManager {
                 throw e;
             } catch (Exception e) {
                 closeClassLoader(classLoader);
+                logger.error("Failed to instantiate plugin: {}", pluginName, e);
                 throw new PluginException("Failed to create plugin instance: " + className + " - " + e.getMessage(), e);
             }
         } catch (PluginException e) {
@@ -207,10 +202,10 @@ public class PluginManager {
      */
     public void initPlugin(String pluginName) throws PluginException {
         PluginWrapper wrapper = getPluginWrapper(pluginName);
+        logger.info("Initializing plugin: {}", pluginName);
+        
         executeLifecycleOperation(pluginName, PluginState.LOADED, () -> {
-            logger.info("Initializing plugin: {}", pluginName);
             wrapper.getPlugin().init(wrapper.getContext());
-            
             // Register config change listener to restart plugin on config changes
             configManager.addConfigChangeListener(pluginName, this::handleConfigChange);
         }, PluginState.INITIALIZED, "initialize");
@@ -225,13 +220,11 @@ public class PluginManager {
     private void handleConfigChange(String pluginName, Map<String, String> newConfig) {
         PluginWrapper wrapper = plugins.get(pluginName);
         if (wrapper == null) {
-            logger.warn("Plugin not found for config change: {}", pluginName);
             return;
         }
-        
+
         PluginState currentState = wrapper.getState();
-        logger.info("Configuration changed for plugin: {}. Current state: {}. Restarting plugin to apply changes...", 
-                pluginName, currentState);
+        logger.info("Configuration changed for plugin: {}, restarting...", pluginName);
         
         try {
             // Only restart if plugin is currently started
@@ -242,21 +235,19 @@ public class PluginManager {
                     wrapper.setState(PluginState.STOPPED);
                     logger.info("Plugin {} stopped for config reload", pluginName);
                 } catch (Exception e) {
-                    logger.error("Failed to stop plugin {} for config reload", pluginName, e);
+                    logger.error("Failed to stop plugin {} for config reload: {}", pluginName, e.getMessage());
                     wrapper.setState(PluginState.FAILED);
                     return;
                 }
- 
-                // Note: Config is already loaded in memory by savePluginConfig(), no need to reload
-                // Re-initialize with new config (plugin is in STOPPED state, so we can re-init)
+
+                // Re-initialize with new config
                 try {
-                    // Recreate context with new config (context will read from config manager which has new config)
                     PluginContext newContext = createPluginContext(pluginName, wrapper.getPlugin());
                     wrapper.getPlugin().init(newContext);
                     wrapper.setState(PluginState.INITIALIZED);
                     logger.info("Plugin {} re-initialized with new config", pluginName);
                 } catch (Exception e) {
-                    logger.error("Failed to re-initialize plugin {} after config change", pluginName, e);
+                    logger.error("Failed to re-initialize plugin {} after config change: {}", pluginName, e.getMessage());
                     wrapper.setState(PluginState.FAILED);
                     return;
                 }
@@ -265,21 +256,16 @@ public class PluginManager {
                 try {
                     wrapper.getPlugin().start();
                     wrapper.setState(PluginState.STARTED);
-                    logger.info("Plugin {} restarted successfully with new configuration", pluginName);
+                    logger.info("Plugin {} restarted with new configuration", pluginName);
                 } catch (Exception e) {
-                    logger.error("Failed to restart plugin {} after config change", pluginName, e);
+                    logger.error("Failed to restart plugin {} after config change: {}", pluginName, e.getMessage());
                     wrapper.setState(PluginState.FAILED);
                 }
-            } else {
-                // If plugin is not started, config is already loaded, just log
-                logger.info("Configuration updated for plugin: {} (plugin not started, will use new config on next start)", 
-                        pluginName);
-                wrapper.setState(PluginState.FAILED);
-                selfHealingService.handlePluginFailure(pluginName, null);
             }
         } catch (Exception e) {
             logger.error("Error handling config change for plugin: {}", pluginName, e);
             wrapper.setState(PluginState.FAILED);
+            selfHealingService.handlePluginFailure(pluginName, null);
         }
     }
 
@@ -290,17 +276,25 @@ public class PluginManager {
      * @throws PluginException if startup fails
      */
     public void startPlugin(String pluginName) throws PluginException {
+        long startTime = System.currentTimeMillis();
         PluginWrapper wrapper = getPluginWrapper(pluginName);
         if (wrapper.getState() != PluginState.INITIALIZED && wrapper.getState() != PluginState.STOPPED) {
             throw new PluginException("Plugin must be INITIALIZED or STOPPED, current: " + wrapper.getState());
         }
 
+        logger.info("Starting plugin: {}", pluginName);
+        
         executeLifecycleOperation(pluginName, null, () -> {
-            logger.info("Starting plugin: {}", pluginName);
             wrapper.getPlugin().start();
+            
+            // Record success in self-healing (resets failure count)
+            selfHealingService.recordSuccess(pluginName);
+            
             // Publish plugin started event
             publishPluginLifecycleEvent("PluginStarted", pluginName, wrapper.getPlugin().getVersion());
-        }, PluginState.STARTED, "start");
+            long duration = System.currentTimeMillis() - startTime;
+            logger.info("Plugin {} started successfully ({}ms)", pluginName, duration);
+        }, PluginState.STARTED, "start", startTime);
     }
 
     /**
@@ -310,13 +304,16 @@ public class PluginManager {
      * @throws PluginException if shutdown fails
      */
     public void stopPlugin(String pluginName) throws PluginException {
+        long startTime = System.currentTimeMillis();
         PluginWrapper wrapper = getPluginWrapper(pluginName);
+        logger.info("Stopping plugin: {}", pluginName);
         executeLifecycleOperation(pluginName, PluginState.STARTED, () -> {
-            logger.info("Stopping plugin: {}", pluginName);
             wrapper.getPlugin().stop();
             // Publish plugin stopped event
             publishPluginLifecycleEvent("PluginStopped", pluginName, wrapper.getPlugin().getVersion());
-        }, PluginState.STOPPED, "stop");
+            long duration = System.currentTimeMillis() - startTime;
+            logger.info("Plugin {} stopped successfully ({}ms)", pluginName, duration);
+        }, PluginState.STOPPED, "stop", startTime);
     }
 
     /**
@@ -336,23 +333,25 @@ public class PluginManager {
      * @param operation     the operation to execute
      * @param targetState   the target state after successful operation
      * @param operationName the operation name for logging
+     * @param startTime     optional start time for duration logging (-1 to skip)
      * @throws PluginException if operation fails
      */
     private void executeLifecycleOperation(String pluginName, PluginState requiredState, LifecycleOperation operation,
-            PluginState targetState, String operationName) throws PluginException {
+            PluginState targetState, String operationName, long startTime) throws PluginException {
         PluginWrapper wrapper = getPluginWrapper(pluginName);
+        PluginState currentState = wrapper.getState();
 
-        if (requiredState != null && wrapper.getState() != requiredState) {
-            throw new PluginException("Plugin must be in " + requiredState + " state, current: " + wrapper.getState());
+        if (requiredState != null && currentState != requiredState) {
+            throw new PluginException("Plugin must be in " + requiredState + " state, current: " + currentState);
         }
 
         try {
             operation.execute();
             wrapper.setState(targetState);
-            logger.info("Plugin {}: {}", operationName + "ed", pluginName);
         } catch (PluginException e) {
             wrapper.setState(PluginState.FAILED);
             MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
+            logger.error("Failed to {} plugin {}: {}", operationName, pluginName, e.getMessage());
             
             // Notify self-healing service (will attempt automatic recovery)
             selfHealingService.handlePluginFailure(pluginName, e);
@@ -361,12 +360,21 @@ public class PluginManager {
         } catch (Exception e) {
             wrapper.setState(PluginState.FAILED);
             MetricsCollector.getInstance().recordPluginError(pluginName, operationName);
+            logger.error("Failed to {} plugin {}: {}", operationName, pluginName, e.getMessage(), e);
             
             // Notify self-healing service (will attempt automatic recovery)
             selfHealingService.handlePluginFailure(pluginName, e);
             
             throw new PluginException("Failed to " + operationName + " plugin: " + pluginName, e);
         }
+    }
+
+    /**
+     * Overload without startTime for operations not directly tied to duration metrics.
+     */
+    private void executeLifecycleOperation(String pluginName, PluginState requiredState, LifecycleOperation operation,
+            PluginState targetState, String operationName) throws PluginException {
+        executeLifecycleOperation(pluginName, requiredState, operation, targetState, operationName, -1);
     }
 
     /**
@@ -522,49 +530,53 @@ public class PluginManager {
         selfHealingService.setRestartPluginCallback(pluginName -> {
             try {
                 PluginWrapper wrapper = plugins.get(pluginName);
-                logger.info("started a callback to restart the plugin");
-                if (wrapper != null && wrapper.getState() == PluginState.FAILED) {
-                    logger.info("Self-healing: Attempting to restart plugin: {}", pluginName);
-                    // Stop if needed
-                    if (wrapper.getState() == PluginState.STARTED) {
-                        try {
-                            wrapper.getPlugin().stop();
-                        } catch (Exception e) {
-                            logger.warn("Error stopping plugin during recovery: {}", pluginName, e);
-                        }
-                    }
-                    // Re-initialize
+                if (wrapper == null || wrapper.getState() != PluginState.FAILED) {
+                    return;
+                }
+
+                logger.info("Self-healing: Attempting to recover plugin: {}", pluginName);
+
+                // Stop if needed
+                if (wrapper.getState() == PluginState.STARTED) {
                     try {
-                        wrapper.getPlugin().init(wrapper.getContext());
-                        wrapper.setState(PluginState.INITIALIZED);
+                        wrapper.getPlugin().stop();
                     } catch (Exception e) {
-                        logger.error("Error re-initializing plugin during recovery: {}", pluginName, e);
-                        throw e;
-                    }
-                    // Start
-                    try {
-                        wrapper.getPlugin().start();
-                        wrapper.setState(PluginState.STARTED);
-                        
-                        // Record success (resets failure count)
-                        selfHealingService.recordSuccess(pluginName);
-                        
-                        logger.info("Self-healing: Successfully restarted plugin: {}", pluginName);
-                    } catch (Exception e) {
-                        logger.error("Error starting plugin during recovery: {}", pluginName, e);
-                        throw e;
+                        logger.warn("Error stopping plugin {} during recovery: {}", pluginName, e.getMessage());
                     }
                 }
+
+                // Re-initialize
+                try {
+                    wrapper.getPlugin().init(wrapper.getContext());
+                    wrapper.setState(PluginState.INITIALIZED);
+                } catch (Exception e) {
+                    logger.error("Error re-initializing plugin {} during recovery: {}", pluginName, e.getMessage());
+                    throw e;
+                }
+
+                // Start
+                try {
+                    wrapper.getPlugin().start();
+                    wrapper.setState(PluginState.STARTED);
+
+                    // Record success (resets failure count)
+                    selfHealingService.recordSuccess(pluginName);
+
+                    logger.info("Self-healing: Successfully recovered plugin: {}", pluginName);
+                } catch (Exception e) {
+                    logger.error("Error starting plugin {} during recovery: {}", pluginName, e.getMessage());
+                    throw e;
+                }
             } catch (Exception e) {
-                logger.error("Self-healing: Failed to restart plugin: {}", pluginName, e);
+                logger.error("Self-healing: Failed to recover plugin {}: {}", pluginName, e.getMessage());
                 selfHealingService.handlePluginFailure(pluginName, e);
             }
         });
 
         // Alert callback
         selfHealingService.setAlertCallback(pluginName -> {
-            logger.error("Self-healing: ALERT - Plugin {} requires manual intervention", pluginName);
-            // TODO: Integrate with alerting system (email, Slack, etc.)
+            logger.error("Self-healing: ALERT - Plugin {} requires manual intervention (max retries exceeded)",
+                    pluginName);
         });
     }
 
