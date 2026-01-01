@@ -1,6 +1,0 @@
-{
-  "workInterval" : "5000",
-  "enableLogging" : "false",
-  "greeting" : "Hello from updated Example Plugin! config",
-  "maxWorkItems" : "100"
-}
