@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package com.pdbp.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.pdbp.grpc";
+option java_outer_classname = "PluginServiceProto";
+
+// Plugin Service - Main service for plugin-to-plugin and plugin-to-platform communication
+service PluginService {
+    // Unary RPC: Simple request-response
+    rpc CallPlugin(CallRequest) returns (CallResponse);
+    
+    // Server Streaming: Server sends multiple responses
+    rpc StreamFromPlugin(StreamRequest) returns (stream StreamResponse);
+    
+    // Client Streaming: Client sends multiple requests
+    rpc StreamToPlugin(stream StreamRequest) returns (StreamResponse);
+    
+    // Bidirectional Streaming: Both client and server send streams
+    rpc BidirectionalStream(stream StreamRequest) returns (stream StreamResponse);
+    
+    // Get plugin information
+    rpc GetPluginInfo(PluginInfoRequest) returns (PluginInfoResponse);
+    
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Request message for unary call
+message CallRequest {
+    string plugin_name = 1;
+    string method = 2;
+    map<string, string> parameters = 3;
+    bytes payload = 4;
+}
+
+// Response message for unary call
+message CallResponse {
+    Status status = 1;
+    string message = 2;
+    bytes data = 3;
+    map<string, string> metadata = 4;
+}
+
+// Request message for streaming
+message StreamRequest {
+    string plugin_name = 1;
+    string stream_id = 2;
+    bytes data = 3;
+    map<string, string> metadata = 4;
+    bool end_stream = 5;
+}
+
+// Response message for streaming
+message StreamResponse {
+    string stream_id = 1;
+    bytes data = 2;
+    Status status = 3;
+    string message = 4;
+    map<string, string> metadata = 5;
+    bool end_stream = 6;
+}
+
+// Plugin information request
+message PluginInfoRequest {
+    string plugin_name = 1;
+}
+
+// Plugin information response
+message PluginInfoResponse {
+    string plugin_name = 1;
+    string version = 2;
+    string state = 3;
+    map<string, string> metadata = 4;
+}
+
+// Health check request
+message HealthCheckRequest {
+    string plugin_name = 1;
+}
+
+// Health check response
+message HealthCheckResponse {
+    Status status = 1;
+    string message = 2;
+    int64 timestamp = 3;
+}
+
+// Status enumeration for error handling
+enum Status {
+    OK = 0;
+    INVALID_ARGUMENT = 1;
+    NOT_FOUND = 2;
+    PERMISSION_DENIED = 3;
+    RESOURCE_EXHAUSTED = 4;
+    FAILED_PRECONDITION = 5;
+    ABORTED = 6;
+    OUT_OF_RANGE = 7;
+    UNIMPLEMENTED = 8;
+    INTERNAL = 9;
+    UNAVAILABLE = 10;
+    DATA_LOSS = 11;
+    UNAUTHENTICATED = 12;
+}
+

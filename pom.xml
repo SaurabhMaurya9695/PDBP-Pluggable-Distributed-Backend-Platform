@@ -29,9 +29,11 @@
         <module>pdbp-api</module>
         <module>pdbp-loader</module>
         <module>pdbp-core</module>
+        <module>pdbp-grpc</module>
         <module>pdbp-admin</module>
         <module>plugins/example-plugin</module>
         <module>plugins/observability-plugin</module>
+        <module>plugins/grpc-example-plugin</module>
     </modules>
 
     <dependencyManagement>

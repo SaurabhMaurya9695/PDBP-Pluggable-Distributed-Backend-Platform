@@ -1,6 +1,7 @@
 package com.pdbp.core;
 
 import com.pdbp.api.EventBus;
+import com.pdbp.api.GrpcService;
 import com.pdbp.api.Plugin;
 import com.pdbp.api.PluginContext;
 import com.pdbp.api.PluginException;
@@ -8,11 +9,13 @@ import com.pdbp.api.PluginState;
 import com.pdbp.api.PlatformService;
 import com.pdbp.core.config.PluginConfigurationManager;
 import com.pdbp.core.events.EventBusImpl;
+import com.pdbp.core.grpc.GrpcServiceAdapter;
 import com.pdbp.core.healing.SelfHealingService;
 import com.pdbp.core.metrics.MetricsCollector;
 import com.pdbp.core.monitoring.PluginStateMonitor;
 import com.pdbp.core.recovery.PluginRecoveryHandler;
 import com.pdbp.core.util.PathResolver;
+import com.pdbp.grpc.server.PluginRegistry;
 import com.pdbp.loader.PluginClassLoader;
 
 import org.slf4j.Logger;
@@ -31,10 +34,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Plugin Manager - Core component for managing plugin lifecycle.
+ * Also implements PluginRegistry for gRPC service integration.
  *
  * @author Saurabh Maurya
  */
-public class PluginManager {
+public class PluginManager implements PluginRegistry {
 
     private static final Logger logger = LoggerFactory.getLogger(PluginManager.class);
 
@@ -53,6 +57,7 @@ public class PluginManager {
     private final SelfHealingService selfHealingService;
     private final PluginStateMonitor stateMonitor;
     private final PluginRecoveryHandler recoveryHandler;
+    private final com.pdbp.grpc.server.GrpcServer grpcServer;
 
     /**
      * Internal wrapper to track plugin state and metadata.
@@ -122,7 +127,18 @@ public class PluginManager {
         this.stateMonitor = new PluginStateMonitor(this::getAllPluginStates);
         this.stateMonitor.start();
         
-        logger.info("PluginManager initialized with self-healing and state monitoring enabled");
+        // Initialize gRPC server
+        int grpcPort = Integer.parseInt(System.getProperty("pdbp.grpc.port", "9090"));
+        this.grpcServer = new com.pdbp.grpc.server.GrpcServer(this, grpcPort);
+        try {
+            this.grpcServer.start();
+            logger.info("gRPC server started on port {}", grpcPort);
+        } catch (IOException e) {
+            logger.error("Failed to start gRPC server", e);
+            throw new RuntimeException("Failed to start gRPC server", e);
+        }
+        
+        logger.info("PluginManager initialized with self-healing, state monitoring, and gRPC enabled");
     }
 
     /**
@@ -720,6 +736,14 @@ public class PluginManager {
      * Shuts down the plugin manager and all services.
      */
     public void shutdown() {
+        try {
+            if (grpcServer != null) {
+                grpcServer.stop();
+            }
+        } catch (InterruptedException e) {
+            logger.error("Error stopping gRPC server", e);
+            Thread.currentThread().interrupt();
+        }
         stateMonitor.shutdown();
         selfHealingService.shutdown();
         logger.info("PluginManager shut down");
@@ -808,6 +832,9 @@ public class PluginManager {
                 } catch (Exception e) {
                     logger.warn("Failed to get MetricsCollector service", e);
                 }
+            }
+            if (serviceType == GrpcService.class) {
+                return Optional.of(serviceType.cast(new GrpcServiceAdapter()));
             }
             return Optional.empty();
         }
