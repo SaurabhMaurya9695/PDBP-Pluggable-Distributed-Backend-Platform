@@ -55,6 +55,9 @@ public class PluginConfigurationManager implements PlatformService {
     
     // Config change listeners (plugin name -> listeners)
     private final Map<String, List<ConfigChangeListener>> configChangeListeners;
+    
+    // Track last recovery check time per plugin (to avoid repeated recovery attempts)
+    private final Map<String, Long> lastRecoveryCheckTime;
 
     private PluginConfigurationManager(Path baseDirectory) {
         this.configDirectory = baseDirectory.resolve(CONFIG_DIR);
@@ -64,6 +67,7 @@ public class PluginConfigurationManager implements PlatformService {
         this.pluginSecrets = new ConcurrentHashMap<>();
         this.watchServices = new ConcurrentHashMap<>();
         this.configChangeListeners = new ConcurrentHashMap<>();
+        this.lastRecoveryCheckTime = new ConcurrentHashMap<>();
         this.watcherExecutor = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "config-watcher");
             t.setDaemon(true);
@@ -321,35 +325,95 @@ public class PluginConfigurationManager implements PlatformService {
         logger.debug("Started file watchers for hot reload");
     }
 
+    // Reference to PluginManager for recovery operations (set via setter)
+    private com.pdbp.core.PluginManager pluginManager;
+
     /**
-     * Watches configuration files for changes and reloads them.
+     * Sets the PluginManager reference for recovery operations.
+     *
+     * @param pluginManager the PluginManager instance
+     */
+    public void setPluginManager(com.pdbp.core.PluginManager pluginManager) {
+        this.pluginManager = pluginManager;
+        logger.info("PluginManager reference set. Config watcher is now active.");
+    }
+
+    /**
+     * Watches configuration files and attempts to recover failed plugins.
+     * This is a recovery mechanism that monitors failed plugins for config changes.
      */
     private void watchConfigFiles() {
-        try {
-            if (!Files.exists(configDirectory)) {
-                return;
-            }
+        if (pluginManager == null || !Files.exists(configDirectory)) {
+            return;
+        }
 
-            // Check all config files
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(configDirectory, "*.json")) {
-                for (Path configFile : stream) {
-                    String pluginName = configFile.getFileName().toString().replace(CONFIG_FILE_EXT, "");
-                    long lastModified = Files.getLastModifiedTime(configFile).toMillis();
-                    
-                    // Check if file was modified (simple approach - in production use WatchService)
-                    Map<String, String> currentConfig = pluginConfigs.get(pluginName);
-                    if (currentConfig != null) {
-                        // Reload if file was modified recently (within last 2 seconds)
-                        long now = System.currentTimeMillis();
-                        if (lastModified > now - 3000) {
-                            logger.info("Detected config file change for plugin: {}. Reloading...", pluginName);
-                            loadPluginConfig(pluginName);
-                        }
-                    }
-                }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(configDirectory, "*.json")) {
+            for (Path configFile : stream) {
+                processConfigFileForRecovery(configFile);
             }
         } catch (IOException e) {
-            logger.debug("Error watching config files", e);
+            logger.debug("Error watching config files for recovery", e);
+        }
+    }
+
+    /**
+     * Processes a config file to check if recovery is needed for a failed plugin.
+     */
+    private void processConfigFileForRecovery(Path configFile) {
+        String pluginName = extractPluginName(configFile);
+        if (!isPluginFailed(pluginName)) {
+            return;
+        }
+
+        if (isConfigFileModified(configFile, pluginName)) {
+            attemptRecoveryForFailedPlugin(pluginName);
+        }
+    }
+
+    /**
+     * Extracts plugin name from config file path.
+     */
+    private String extractPluginName(Path configFile) {
+        return configFile.getFileName().toString().replace(CONFIG_FILE_EXT, "");
+    }
+
+    /**
+     * Checks if plugin is in FAILED state.
+     */
+    private boolean isPluginFailed(String pluginName) {
+        com.pdbp.api.PluginState state = pluginManager.getPluginState(pluginName);
+        return state == com.pdbp.api.PluginState.FAILED;
+    }
+
+    /**
+     * Checks if config file was modified after last check.
+     */
+    private boolean isConfigFileModified(Path configFile, String pluginName) {
+        try {
+            long lastModified = Files.getLastModifiedTime(configFile).toMillis();
+            Long lastCheckTime = lastRecoveryCheckTime.get(pluginName);
+            return lastCheckTime == null || lastModified > lastCheckTime;
+        } catch (IOException e) {
+            logger.debug("Error checking config file modification time for plugin: {}", pluginName, e);
+            return false;
+        }
+    }
+
+    /**
+     * Attempts to recover a failed plugin after config change.
+     */
+    private void attemptRecoveryForFailedPlugin(String pluginName) {
+        logger.info("Config watcher: Detected config change for failed plugin: {}. Attempting recovery...", pluginName);
+
+        lastRecoveryCheckTime.put(pluginName, System.currentTimeMillis());
+        loadPluginConfig(pluginName);
+
+        boolean recovered = pluginManager.attemptPluginRecovery(pluginName);
+        if (recovered) {
+            logger.info("Config watcher: Successfully recovered plugin: {}", pluginName);
+            lastRecoveryCheckTime.remove(pluginName);
+        } else {
+            logger.debug("Config watcher: Recovery attempt for plugin {} did not complete", pluginName);
         }
     }
 

@@ -96,7 +96,8 @@ public class ExamplePlugin implements Plugin {
             this.enableLogging = enableLogging;
             this.maxWorkItems = maxWorkItems;
         } catch (NumberFormatException e) {
-            logger.warn("Invalid configuration value, using defaults", e);
+            logger.info("Invalid configuration value, using defaults", e);
+            throw e;
         }
 
         // Subscribe to EventBus to listen to all events (demonstration)
@@ -109,7 +110,7 @@ public class ExamplePlugin implements Plugin {
             });
             logger.info("ExamplePlugin: Subscribed to EventBus (listening to all events)");
         } else {
-            logger.warn("ExamplePlugin: EventBus not available");
+            logger.info("ExamplePlugin: EventBus not available");
         }
 
         logger.info("Example plugin initialized successfully");
